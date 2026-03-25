@@ -4,56 +4,64 @@ title: Quick Start Guide
 nav_order: 1
 ---
 
+<span class="section-label">// 01_getting-started.sh</span>
+
 # Quick Start Guide
 
-Get started with Podman on Arch Linux in 15 minutes.
+Get up and running with Podman on Arch Linux in 15 minutes.
 
-## Prerequisites
+---
 
-### System Requirements
+## System Requirements
 
-| Requirement | Specification |
-|-------------|---------------|
-| OS | Arch Linux (rolling release) |
-| Kernel | 5.15+ |
-| RAM | 4GB minimum, 8GB recommended |
-| Storage | 20GB available space |
-| Network | Internet connectivity |
+| Component | Minimum | Recommended |
+|-----------|---------|-------------|
+| OS | Arch Linux (rolling) | Arch Linux (rolling) |
+| Kernel | 5.15+ | 6.x+ |
+| RAM | 4 GB | 8 GB |
+| Storage | 20 GB | 50 GB |
+| Network | Internet | Internet |
 
-### Install Podman
+---
+
+## Installation
 
 ```bash
-sudo pacman -S podman podman-compose
-```
+# Install Podman and compose
+sudo pacman -Syu podman podman-compose
 
-Verify installation:
-```bash
+# Verify installation
 podman --version
 podman-compose --version
 ```
 
-## First Container (5 min)
+---
 
-### Pull and Run
+## First Container
+
+### Pull & Run Interactive
 
 ```bash
-# Pull an image
+# Pull image from registry
 podman pull docker.io/library/alpine:latest
 
-# Run a container
+# Run interactive shell
 podman run -it --name my-alpine alpine:latest /bin/sh
 ```
 
-### Run in Detached Mode
+### Run Detached
 
 ```bash
+# Start nginx in background
 podman run -d --name web nginx:alpine
+
+# List running containers
 podman ps
 ```
 
-## Deploy a Web App (10 min)
+---
 
-### Using podman-compose
+## Deploy with Compose
 
 Create `docker-compose.yml`:
 
@@ -66,41 +74,67 @@ services:
       - "8080:80"
     volumes:
       - ./html:/usr/share/nginx/html:ro
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
 ```
 
+Deploy:
+
 ```bash
+# Start services
 podman-compose up -d
-```
 
-### Health Checks
+# View status
+podman-compose ps
 
-```bash
+# Check health
 podman healthcheck run web
-curl http://localhost:8080
 ```
 
-## Basic Monitoring
+---
+
+## Monitoring
 
 ```bash
-# Check container stats
+# Real-time stats
 podman stats --all
 
 # View logs
-podman logs web
+podman logs -f web
 
 # Inspect container
 podman inspect web
+
+# System info
+podman system info
 ```
+
+---
 
 ## Cleanup
 
 ```bash
+# Stop services
 podman-compose down
-podman system prune -a
+
+# Remove unused resources
+podman system prune -af
 ```
+
+---
 
 ## Next Steps
 
-- [Operations Runbook](../runbook/) - Incident response procedures
-- [Architecture Guide](../architecture/) - Design patterns
-- [Multi-Node Deployment](../architecture/multi-node-deployment/) - HA setup
+- [Operations Runbook](../runbook/) — Incident response & daily tasks
+- [Architecture Guide](../architecture/) — Design patterns & decisions
+- [Multi-Node Deployment](../architecture/multi-node-deployment/) — HA cluster setup
+
+---
+
+```bash
+# You're ready to deploy!
+podman run --rm -it archlinux:latest /bin/bash
+```
