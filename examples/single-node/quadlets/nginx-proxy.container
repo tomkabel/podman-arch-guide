@@ -1,0 +1,64 @@
+# Quadlet Container File for Nginx Reverse Proxy
+# Place in ~/.config/containers/systemd/ or /etc/containers/systemd/
+# Rename to nginx-proxy.container
+
+[Unit]
+Description=Nginx Reverse Proxy
+Documentation=https://nginx.org/en/docs/
+Wants=network-online.target
+After=network-online.target
+
+[Container]
+Image=docker.io/library/nginx:alpine
+ContainerName=nginx-proxy
+
+# Network configuration
+Network=frontend.network
+Network=backend.network
+PublishPort=80:80
+PublishPort=443:443
+
+# Resource limits
+Memory=256M
+MemorySwap=256M
+CPUQuota=50%
+
+# Security options
+SecurityLabelType=container_nginx_t
+SecurityLabelDisable=false
+NoNewPrivileges=true
+DropCapability=ALL
+AddCapability=CHOWN SETGID SETUID
+
+# Health check
+HealthCmd=wget --quiet --tries=1 --spider http://localhost/health || exit 1
+HealthInterval=30s
+HealthTimeout=10s
+HealthRetries=3
+HealthStartPeriod=10s
+
+# Environment
+Environment=NGINX_ENTRYPOINT_QUIET_LOGS=1
+Environment=APP_ENV=production
+
+# Volumes
+Volume=%h/config/nginx/nginx.conf:/etc/nginx/nginx.conf:ro,Z
+Volume=%h/config/nginx/conf.d:/etc/nginx/conf.d:ro,Z
+Volume=nginx-certs.volume:/etc/nginx/certs:Z
+Volume=nginx-html.volume:/usr/share/nginx/html:Z
+Volume=nginx-cache.volume:/var/cache/nginx:Z
+
+# Restart policy
+Restart=unless-stopped
+RestartSec=10
+
+# Logging
+LogDriver=journald
+
+[Service]
+Restart=always
+TimeoutStartSec=60
+TimeoutStopSec=30
+
+[Install]
+WantedBy=default.target

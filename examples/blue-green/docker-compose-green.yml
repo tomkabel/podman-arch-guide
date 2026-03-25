@@ -1,0 +1,136 @@
+# Blue-Green Deployment - Green Environment
+# Production-ready green environment configuration
+
+version: "3.8"
+
+x-common-variables: &common-variables
+  APP_ENV: production
+  APP_DEBUG: "false"
+  DB_HOST: postgres-green
+  REDIS_HOST: redis-green
+
+services:
+  # Green Application
+  app-green:
+    image: ${APP_IMAGE:-docker.io/library/nginx:alpine}
+    container_name: app-green
+    restart: unless-stopped
+    networks:
+      - green-network
+      - shared-backend
+    expose:
+      - "8080"
+    volumes:
+      - app_green_data:/usr/share/nginx/html:Z
+      - ./app/green-config:/etc/nginx/conf.d:ro,Z
+    environment:
+      <<: *common-variables
+      APP_COLOR: green
+      DEPLOYMENT_ID: ${DEPLOYMENT_ID:-green-001}
+      HEALTH_CHECK_ID: green
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8080/health?color=green"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - SETGID
+      - SETUID
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+    labels:
+      - "deployment.color=green"
+      - "deployment.active=${GREEN_ACTIVE:-false}"
+      - "traefik.enable=true"
+      - "traefik.http.routers.app-green.rule=Host(`app.example.com`)"
+      - "traefik.http.routers.app-green.entrypoints=web"
+      - "traefik.http.services.app-green.loadbalancer.server.port=8080"
+
+  # Green PostgreSQL
+  postgres-green:
+    image: docker.io/library/postgres:16-alpine
+    container_name: postgres-green
+    restart: unless-stopped
+    networks:
+      - green-network
+      - shared-backend
+    expose:
+      - "5432"
+    volumes:
+      - postgres_green_data:/var/lib/postgresql/data:Z
+      - ./init-scripts:/docker-entrypoint-initdb.d:ro,Z
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-appuser}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:-appdb}
+      PGDATA: /var/lib/postgresql/data/pgdata
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-appuser} -d ${POSTGRES_DB:-appdb}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    security_opt:
+      - no-new-privileges:true
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 1G
+
+  # Green Redis
+  redis-green:
+    image: docker.io/library/redis:7-alpine
+    container_name: redis-green
+    restart: unless-stopped
+    networks:
+      - green-network
+      - shared-backend
+    expose:
+      - "6379"
+    volumes:
+      - redis_green_data:/data:Z
+      - ./redis/green.conf:/usr/local/etc/redis/redis.conf:ro,Z
+    command: redis-server /usr/local/etc/redis/redis.conf
+    environment:
+      - REDIS_PASSWORD=${REDIS_PASSWORD}
+    healthcheck:
+      test: ["CMD", "redis-cli", "--raw", "incr", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    security_opt:
+      - no-new-privileges:true
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+
+networks:
+  green-network:
+    driver: bridge
+    internal: true
+    ipam:
+      config:
+        - subnet: 172.30.2.0/24
+  shared-backend:
+    external: true
+    name: blue-green-shared
+
+volumes:
+  app_green_data:
+    driver: local
+  postgres_green_data:
+    driver: local
+  redis_green_data:
+    driver: local

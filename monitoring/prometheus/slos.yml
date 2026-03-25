@@ -1,0 +1,218 @@
+# Service Level Objectives (SLOs) for Podman Production
+# These rules calculate SLI metrics and generate alerts when SLOs are at risk
+
+groups:
+  # ===========================================
+  # Container Availability SLO
+  # Target: 99.9% uptime (43.8 min downtime/month)
+  # ===========================================
+  - name: container_availability
+    interval: 30s
+    rules:
+      # Calculate availability percentage over 30 days
+      - record: slo:container_availability:ratio_30d
+        expr: |
+          (
+            sum by (container_name) (
+              increase(container_health_check_passed_total[30d])
+            )
+          ) /
+          (
+            sum by (container_name) (
+              increase(container_health_check_total[30d])
+            )
+          )
+        labels:
+          slo_target: "0.999"
+          
+      # Alert when error budget is being consumed too fast
+      - alert: ContainerAvailabilityBudgetBurn
+        expr: |
+          (
+            slo:container_availability:ratio_30d < 0.999
+          and
+            (
+              1 - slo:container_availability:ratio_30d
+            ) / 
+            (
+              1 - 0.999
+            ) > 14.4
+          )
+        for: 2m
+        labels:
+          severity: critical
+          slo: container_availability
+        annotations:
+          summary: "Container {{ $labels.container_name }} error budget is burning fast"
+          description: "Availability is {{ $value | humanizePercentage }}. Error budget will be exhausted in less than 2 days."
+          runbook_url: "https://github.com/yourorg/podman-arch-guide/blob/main/docs/runbook/availability-degradation.md"
+
+      # Warning when availability drops below SLO
+      - alert: ContainerAvailabilityBelowSLO
+        expr: slo:container_availability:ratio_30d < 0.999
+        for: 5m
+        labels:
+          severity: warning
+          slo: container_availability
+        annotations:
+          summary: "Container {{ $labels.container_name }} availability below SLO"
+          description: "Current availability: {{ $value | humanizePercentage }}. Target: 99.9%"
+
+  # ===========================================
+  # Deployment Success Rate SLO
+  # Target: 99% of deployments succeed
+  # ===========================================
+  - name: deployment_success
+    interval: 1m
+    rules:
+      # Calculate deployment success rate over 7 days
+      - record: slo:deployment_success_rate:ratio_7d
+        expr: |
+          (
+            sum(deployment_status_total{status="success"})
+          ) /
+          (
+            sum(deployment_status_total)
+          )
+        labels:
+          slo_target: "0.99"
+          
+      - alert: DeploymentSuccessRateLow
+        expr: slo:deployment_success_rate:ratio_7d < 0.99
+        for: 5m
+        labels:
+          severity: warning
+          slo: deployment_success
+        annotations:
+          summary: "Deployment success rate below SLO"
+          description: "Success rate is {{ $value | humanizePercentage }}. Target: 99%"
+          runbook_url: "https://github.com/yourorg/podman-arch-guide/blob/main/docs/runbook/deployment-failures.md"
+
+  # ===========================================
+  # Rollback Time SLO
+  # Target: < 5 minutes from decision to completion
+  # ===========================================
+  - name: rollback_time
+    interval: 1m
+    rules:
+      # Measure rollback duration
+      - record: slo:rollback_duration_seconds
+        expr: |
+          histogram_quantile(0.95,
+            sum(rate(rollback_duration_seconds_bucket[1h])) by (le)
+          )
+        labels:
+          slo_target: "300"  # 5 minutes in seconds
+          
+      - alert: RollbackTimeExceedsSLO
+        expr: slo:rollback_duration_seconds > 300
+        for: 1m
+        labels:
+          severity: warning
+          slo: rollback_time
+        annotations:
+          summary: "Rollback time exceeds 5 minute SLO"
+          description: "95th percentile rollback time is {{ $value | humanizeDuration }}. Target: < 5 minutes"
+
+  # ===========================================
+  # Resource Utilization SLIs
+  # Not SLOs, but important for capacity planning
+  # ===========================================
+  - name: resource_utilization
+    interval: 30s
+    rules:
+      # CPU utilization per container
+      - record: slo:container_cpu_utilization:percent
+        expr: |
+          rate(container_cpu_usage_seconds_total[5m]) * 100
+        labels:
+          metric_type: utilization
+          
+      # Memory utilization per container
+      - record: slo:container_memory_utilization:percent
+        expr: |
+          (
+            container_memory_working_set_bytes /
+            container_spec_memory_limit_bytes
+          ) * 100
+        labels:
+          metric_type: utilization
+          
+      # Alert on high resource usage
+      - alert: ContainerHighCPUUtilization
+        expr: slo:container_cpu_utilization:percent > 80
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Container {{ $labels.container_name }} high CPU usage"
+          description: "CPU utilization is {{ $value | humanizePercentage }} for > 10 minutes"
+          runbook_url: "https://github.com/yourorg/podman-arch-guide/blob/main/docs/runbook/high-cpu-usage.md"
+          
+      - alert: ContainerHighMemoryUtilization
+        expr: slo:container_memory_utilization:percent > 85
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Container {{ $labels.container_name }} high memory usage"
+          description: "Memory utilization is {{ $value | humanizePercentage }}"
+          action: "Consider increasing memory limit or scaling horizontally"
+
+  # ===========================================
+  # Mean Time To Recovery (MTTR)
+  # Target: < 15 minutes
+  # ===========================================
+  - name: mttr
+    interval: 5m
+    rules:
+      # Track incident duration
+      - record: slo:incident_duration:seconds
+        expr: |
+          (
+            time() - alert_start_time{status="firing"}
+          )
+        labels:
+          slo_target: "900"  # 15 minutes
+          
+      - alert: IncidentDurationExceedsMTTR
+        expr: slo:incident_duration:seconds > 900
+        for: 1m
+        labels:
+          severity: critical
+          slo: mttr
+        annotations:
+          summary: "Incident duration exceeds MTTR SLO"
+          description: "Incident has been ongoing for {{ $value | humanizeDuration }}. Target: < 15 minutes"
+          action: "Escalate to senior on-call engineer"
+
+  # ===========================================
+  # Error Budget Calculations
+  # ===========================================
+  - name: error_budgets
+    interval: 5m
+    rules:
+      # Remaining error budget for availability
+      - record: slo:error_budget:availability_remaining_percent
+        expr: |
+          (
+            0.999 - (1 - slo:container_availability:ratio_30d)
+          ) / 0.001 * 100
+        labels:
+          slo: container_availability
+          
+      # Burn rate (how fast we're consuming budget)
+      - record: slo:burn_rate:availability_1h
+        expr: |
+          (
+            sum by (container_name) (
+              increase(container_health_check_failed_total[1h])
+            )
+          ) /
+          (
+            0.001 * sum by (container_name) (
+              increase(container_health_check_total[30d]) / 30 / 24
+            )
+          )
+        labels:
+          slo: container_availability

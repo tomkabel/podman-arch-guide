@@ -1,0 +1,64 @@
+# Quadlet Container File for PostgreSQL Database
+# Place in ~/.config/containers/systemd/ or /etc/containers/systemd/
+
+[Unit]
+Description=PostgreSQL Database Server
+Documentation=https://www.postgresql.org/docs/
+Wants=network-online.target
+After=network-online.target
+
+[Container]
+Image=docker.io/library/postgres:16-alpine
+ContainerName=postgres-db
+
+# Network configuration
+Network=backend.network
+
+# Resource limits
+Memory=1G
+MemorySwap=1G
+CPUQuota=100%
+
+# Security options
+SecurityLabelType=container_postgres_t
+NoNewPrivileges=true
+DropCapability=ALL
+AddCapability=CHOWN SETGID SETUID
+
+# Health check
+HealthCmd=pg_isready -U appuser -d appdb || exit 1
+HealthInterval=10s
+HealthTimeout=5s
+HealthRetries=5
+HealthStartPeriod=30s
+
+# Environment
+Environment=POSTGRES_USER=appuser
+Environment=POSTGRES_DB=appdb
+Environment=POSTGRES_INITDB_ARGS=--auth-host=scram-sha-256 --auth-local=scram-sha-256
+Environment=PGDATA=/var/lib/postgresql/data/pgdata
+
+# Secrets
+Secret=postgres_password,type=env,target=POSTGRES_PASSWORD
+
+# Volumes
+Volume=postgres-data.volume:/var/lib/postgresql/data:Z
+Volume=%h/init-scripts:/docker-entrypoint-initdb.d:ro,Z
+Volume=postgres-backup.volume:/backups:Z
+
+# Shared memory
+ShmSize=256m
+
+# Restart policy
+Restart=unless-stopped
+RestartSec=10
+
+# Logging
+LogDriver=journald
+
+[Service]
+Restart=always
+TimeoutStartSec=120
+
+[Install]
+WantedBy=default.target

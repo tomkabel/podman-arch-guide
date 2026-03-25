@@ -1,0 +1,137 @@
+# Rootless Podman Configuration
+# User namespace isolation and security hardening
+
+version: "3.8"
+
+services:
+  # Rootless Nginx
+  nginx-rootless:
+    image: docker.io/nginxinc/nginx-unprivileged:alpine
+    container_name: nginx-rootless
+    restart: unless-stopped
+    ports:
+      - "8080:8080"  # Unprivileged port (1024+)
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/html:/usr/share/nginx/html:ro
+      - nginx_cache:/var/cache/nginx
+    environment:
+      - NGINX_ENTRYPOINT_QUIET_LOGS=1
+    user: "101:101"  # nginx user
+    group_add:
+      - "101"
+    security_opt:
+      - no-new-privileges:true
+      - seccomp=./seccomp/nginx-seccomp.json
+    cap_drop:
+      - ALL
+    deploy:
+      resources:
+        limits:
+          cpus: '0.25'
+          memory: 128M
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  # Rootless Application
+  app-rootless:
+    image: ${APP_IMAGE:-docker.io/library/nginx:alpine}
+    container_name: app-rootless
+    restart: unless-stopped
+    user: "1000:1000"  # Custom app user
+    expose:
+      - "3000"
+    volumes:
+      - app_data:/app/data
+      - ./app:/app/src:ro
+    environment:
+      - HOME=/app
+      - USER=appuser
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    deploy:
+      resources:
+        limits:
+          cpus: '0.25'
+          memory: 256M
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  # Rootless Database (using official rootless image)
+  postgres-rootless:
+    image: docker.io/bitnami/postgresql:16
+    container_name: postgres-rootless
+    restart: unless-stopped
+    user: "1001:1001"  # bitnami user
+    expose:
+      - "5432"
+    volumes:
+      - postgres_data:/bitnami/postgresql
+    environment:
+      - POSTGRESQL_USERNAME=${POSTGRES_USER:-appuser}
+      - POSTGRESQL_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRESQL_DATABASE=${POSTGRES_DB:-appdb}
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "${POSTGRES_USER:-appuser}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Rootless Redis
+  redis-rootless:
+    image: docker.io/bitnami/redis:7
+    container_name: redis-rootless
+    restart: unless-stopped
+    user: "1001:1001"  # bitnami user
+    expose:
+      - "6379"
+    volumes:
+      - redis_data:/bitnami/redis/data
+      - ./redis/redis.conf:/opt/bitnami/redis/mounted-etc/redis.conf:ro
+    environment:
+      - REDIS_PASSWORD=${REDIS_PASSWORD}
+      - REDIS_DISABLE_COMMANDS=FLUSHDB,FLUSHALL,CONFIG
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    deploy:
+      resources:
+        limits:
+          cpus: '0.25'
+          memory: 256M
+
+networks:
+  rootless-net:
+    driver: bridge
+    internal: false
+    ipam:
+      config:
+        - subnet: 172.25.10.0/24
+
+volumes:
+  nginx_cache:
+    driver: local
+  app_data:
+    driver: local
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local

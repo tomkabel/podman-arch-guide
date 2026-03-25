@@ -1,0 +1,87 @@
+# Quadlet Volume Files for Single-Node Stack
+# Place in ~/.config/containers/systemd/ or /etc/containers/systemd/
+
+# ============================================
+# nginx-certs.volume
+# ============================================
+[Volume]
+VolumeName=nginx-certs
+Driver=local
+
+[Install]
+WantedBy=default.target
+
+---
+
+# ============================================
+# nginx-html.volume
+# ============================================
+[Volume]
+VolumeName=nginx-html
+Driver=local
+
+[Install]
+WantedBy=default.target
+
+---
+
+# ============================================
+# nginx-cache.volume
+# ============================================
+[Volume]
+VolumeName=nginx-cache
+Driver=local
+
+[Install]
+WantedBy=default.target
+
+---
+
+# ============================================
+# app-data.volume
+# ============================================
+[Volume]
+VolumeName=app-data
+Driver=local
+
+[Install]
+WantedBy=default.target
+
+---
+
+# ============================================
+# postgres-data.volume
+# ============================================
+[Volume]
+VolumeName=postgres-data
+Driver=local
+
+# For production, consider using a specific host path or network storage
+# Path=/var/lib/containers/storage/volumes/postgres-data
+
+[Install]
+WantedBy=default.target
+
+---
+
+# ============================================
+# postgres-backup.volume
+# ============================================
+[Volume]
+VolumeName=postgres-backup
+Driver=local
+
+[Install]
+WantedBy=default.target
+
+---
+
+# ============================================
+# redis-data.volume
+# ============================================
+[Volume]
+VolumeName=redis-data
+Driver=local
+
+[Install]
+WantedBy=default.target

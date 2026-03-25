@@ -1,0 +1,58 @@
+# Quadlet Container File for Application Server
+# Place in ~/.config/containers/systemd/ or /etc/containers/systemd/
+
+[Unit]
+Description=Application Server
+Documentation=https://example.com/docs
+Wants=network-online.target postgres-db.service redis-cache.service
+After=network-online.target postgres-db.service redis-cache.service
+
+[Container]
+Image=docker.io/library/nginx:alpine
+ContainerName=app-server
+
+# Network configuration
+Network=backend.network
+
+# Exposed ports (internal only)
+ExposeHostPort=8080
+
+# Resource limits
+Memory=256M
+MemorySwap=256M
+CPUQuota=50%
+
+# Security options
+SecurityLabelType=container_app_t
+NoNewPrivileges=true
+DropCapability=ALL
+AddCapability=CHOWN SETGID SETUID
+
+# Health check
+HealthCmd=wget --quiet --tries=1 --spider http://localhost:8080/health || exit 1
+HealthInterval=30s
+HealthTimeout=10s
+HealthRetries=3
+HealthStartPeriod=30s
+
+# Environment
+Environment=APP_ENV=production
+Environment=APP_DEBUG=false
+
+# Volumes
+Volume=app-data.volume:/usr/share/nginx/html:Z
+Volume=%h/config/app:/etc/nginx/conf.d:ro,Z
+
+# Secrets (if using podman secrets)
+# Secret=app_db_password,type=env,target=DB_PASSWORD
+
+# Restart policy
+Restart=unless-stopped
+RestartSec=10
+
+[Service]
+Restart=always
+TimeoutStartSec=90
+
+[Install]
+WantedBy=default.target

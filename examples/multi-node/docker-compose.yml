@@ -1,0 +1,384 @@
+# Multi-Node HA Podman Deployment
+# 3-Node High Availability Cluster with Ceph, Keepalived, and HAProxy
+
+version: "3.8"
+
+services:
+  # Consul Service Discovery (Server Mode)
+  consul-server:
+    image: docker.io/hashicorp/consul:1.17
+    container_name: consul-server
+    restart: unless-stopped
+    hostname: "consul-server-{{.Node.Hostname}}"
+    networks:
+      - consul-network
+      - service-mesh
+    ports:
+      - "8300:8300/tcp"   # Server RPC
+      - "8301:8301/tcp"   # Serf LAN
+      - "8301:8301/udp"
+      - "8302:8302/tcp"   # Serf WAN
+      - "8302:8302/udp"
+      - "8500:8500/tcp"   # HTTP API/UI
+      - "8600:8600/tcp"   # DNS
+      - "8600:8600/udp"
+    volumes:
+      - consul_data:/consul/data:Z
+      - ./consul/server-config.hcl:/consul/config/server.hcl:ro,Z
+      - ./consul/tls:/consul/tls:ro,Z
+    environment:
+      - CONSUL_BIND_INTERFACE=eth0
+      - CONSUL_CLIENT_INTERFACE=eth0
+      - CONSUL_HTTP_TOKEN=${CONSUL_HTTP_TOKEN}
+    command: >
+      consul agent -server -ui
+      -bootstrap-expect=3
+      -retry-join-wan="consul-server-node1"
+      -retry-join-wan="consul-server-node2"
+      -retry-join-wan="consul-server-node3"
+      -datacenter=dc1
+      -config-file=/consul/config/server.hcl
+    healthcheck:
+      test: ["CMD", "consul", "info"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    deploy:
+      placement:
+        constraints:
+          - node.labels.consul.server == true
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+
+  # Consul Agent (Client Mode on all nodes)
+  consul-agent:
+    image: docker.io/hashicorp/consul:1.17
+    container_name: consul-agent
+    restart: unless-stopped
+    networks:
+      - consul-network
+      - service-mesh
+    volumes:
+      - consul_client_data:/consul/data:Z
+      - ./consul/agent-config.hcl:/consul/config/agent.hcl:ro,Z
+    environment:
+      - CONSUL_BIND_INTERFACE=eth0
+    command: >
+      consul agent -client
+      -retry-join="consul-server-node1"
+      -retry-join="consul-server-node2"
+      -retry-join="consul-server-node3"
+      -datacenter=dc1
+      -config-file=/consul/config/agent.hcl
+    healthcheck:
+      test: ["CMD", "consul", "info"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    deploy:
+      mode: global
+      resources:
+        limits:
+          cpus: '0.25'
+          memory: 256M
+
+  # HAProxy Load Balancer (on all nodes)
+  haproxy:
+    image: docker.io/library/haproxy:2.8-alpine
+    container_name: multi-node-haproxy
+    restart: unless-stopped
+    networks:
+      - service-mesh
+      - frontend
+    ports:
+      - "80:80"
+      - "443:443"
+      - "8404:8404"  # Stats
+    volumes:
+      - ./haproxy/haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro,Z
+      - ./haproxy/services:/usr/local/etc/haproxy/services:ro,Z
+      - haproxy_stats:/var/lib/haproxy:Z
+      - ./certs:/etc/ssl/certs:ro,Z
+    environment:
+      - CONSUL_HTTP_ADDR=http://consul-agent:8500
+    depends_on:
+      - consul-agent
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8404/stats"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    deploy:
+      mode: global
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+
+  # Application Service (replicated across nodes)
+  app:
+    image: ${APP_IMAGE:-docker.io/library/nginx:alpine}
+    container_name: app-multi
+    restart: unless-stopped
+    networks:
+      - service-mesh
+      - backend
+    expose:
+      - "8080"
+    volumes:
+      - app_data:/usr/share/nginx/html:Z
+      - ./app/config:/etc/nginx/conf.d:ro,Z
+    environment:
+      - CONSUL_HTTP_ADDR=http://consul-agent:8500
+      - SERVICE_NAME=app
+      - SERVICE_PORT=8080
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    deploy:
+      replicas: 3
+      placement:
+        max_replicas_per_node: 1
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+      update_config:
+        parallelism: 1
+        delay: 10s
+        failure_action: rollback
+      restart_policy:
+        condition: any
+        delay: 5s
+        max_attempts: 3
+
+  # Ceph Monitor (MON)
+  ceph-mon:
+    image: docker.io/ceph/ceph:v18
+    container_name: ceph-mon
+    restart: unless-stopped
+    hostname: ceph-mon-{{.Node.Hostname}}
+    networks:
+      - ceph-network
+    ports:
+      - "6789:6789"
+    volumes:
+      - ceph_mon_data:/var/lib/ceph/mon:Z
+      - ./ceph/ceph.conf:/etc/ceph/ceph.conf:ro,Z
+      - ./ceph/ceph.client.admin.keyring:/etc/ceph/ceph.client.admin.keyring:ro,Z
+    environment:
+      - MON_IP=${NODE_IP}
+      - CEPH_PUBLIC_NETWORK=${CEPH_NETWORK}
+    command: >
+      sh -c "
+        if [ ! -d /var/lib/ceph/mon/ceph-$${HOSTNAME} ]; then
+          ceph-mon --mkfs -i $${HOSTNAME} --monmap /etc/ceph/monmap --keyring /etc/ceph/ceph.mon.keyring;
+        fi;
+        ceph-mon -i $${HOSTNAME} --public-addr $${MON_IP}:6789
+      "
+    healthcheck:
+      test: ["CMD", "ceph", "status"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    deploy:
+      placement:
+        constraints:
+          - node.labels.ceph.mon == true
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+
+  # Ceph Manager (MGR)
+  ceph-mgr:
+    image: docker.io/ceph/ceph:v18
+    container_name: ceph-mgr
+    restart: unless-stopped
+    hostname: ceph-mgr-{{.Node.Hostname}}
+    networks:
+      - ceph-network
+    ports:
+      - "9283:9283"  # Prometheus metrics
+      - "8443:8443"  # Dashboard
+    volumes:
+      - ceph_mgr_data:/var/lib/ceph/mgr:Z
+      - ./ceph/ceph.conf:/etc/ceph/ceph.conf:ro,Z
+      - ./ceph/ceph.client.admin.keyring:/etc/ceph/ceph.client.admin.keyring:ro,Z
+    command: ceph-mgr -i {{.Node.Hostname}}
+    healthcheck:
+      test: ["CMD", "ceph", "status"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    deploy:
+      placement:
+        constraints:
+          - node.labels.ceph.mgr == true
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 1G
+
+  # Ceph OSD (Object Storage Daemon)
+  ceph-osd:
+    image: docker.io/ceph/ceph:v18
+    container_name: ceph-osd
+    restart: unless-stopped
+    hostname: ceph-osd-{{.Node.Hostname}}
+    networks:
+      - ceph-network
+    privileged: true
+    pid: host
+    volumes:
+      - ceph_osd_data:/var/lib/ceph/osd:Z
+      - ./ceph/ceph.conf:/etc/ceph/ceph.conf:ro,Z
+      - ./ceph/ceph.client.admin.keyring:/etc/ceph/ceph.client.admin.keyring:ro,Z
+      - /dev:/dev:ro
+      - /run/udev:/run/udev:ro
+    environment:
+      - OSD_DEVICE=${OSD_DEVICE}
+    command: >
+      sh -c "
+        if [ ! -d /var/lib/ceph/osd/ceph-$${HOSTNAME} ]; then
+          ceph-volume lvm create --data $${OSD_DEVICE};
+        fi;
+        ceph-osd -i $${HOSTNAME}
+      "
+    deploy:
+      placement:
+        constraints:
+          - node.labels.ceph.osd == true
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 2G
+
+  # Prometheus Monitoring
+  prometheus:
+    image: docker.io/prom/prometheus:latest
+    container_name: prometheus
+    restart: unless-stopped
+    networks:
+      - service-mesh
+      - consul-network
+    expose:
+      - "9090"
+    volumes:
+      - prometheus_data:/prometheus:Z
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro,Z
+      - ./prometheus/alerts.yml:/etc/prometheus/alerts.yml:ro,Z
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.time=15d'
+      - '--web.console.libraries=/usr/share/prometheus/console_libraries'
+      - '--web.console.templates=/usr/share/prometheus/consoles'
+      - '--web.enable-lifecycle'
+      - '--web.enable-admin-api'
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:9090/-/healthy"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    deploy:
+      placement:
+        constraints:
+          - node.labels.monitoring == true
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 1G
+
+  # Grafana Dashboard
+  grafana:
+    image: docker.io/grafana/grafana:latest
+    container_name: grafana
+    restart: unless-stopped
+    networks:
+      - service-mesh
+      - consul-network
+    expose:
+      - "3000"
+    volumes:
+      - grafana_data:/var/lib/grafana:Z
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro,Z
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro,Z
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD:-admin}
+      - GF_SERVER_ROOT_URL=${GRAFANA_URL:-http://localhost/grafana}
+      - GF_INSTALL_PLUGINS=grafana-clock-panel,grafana-simple-json-datasource
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:3000/api/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    deploy:
+      placement:
+        constraints:
+          - node.labels.monitoring == true
+      resources:
+        limits:
+          cpus: '0.25'
+          memory: 512M
+
+networks:
+  consul-network:
+    driver: bridge
+    internal: false
+    ipam:
+      config:
+        - subnet: 172.25.1.0/24
+
+  service-mesh:
+    driver: bridge
+    internal: true
+    ipam:
+      config:
+        - subnet: 172.25.2.0/24
+
+  backend:
+    driver: bridge
+    internal: true
+    ipam:
+      config:
+        - subnet: 172.25.3.0/24
+
+  ceph-network:
+    driver: bridge
+    internal: true
+    ipam:
+      config:
+        - subnet: 172.25.4.0/24
+
+  frontend:
+    driver: bridge
+    internal: false
+    ipam:
+      config:
+        - subnet: 172.25.5.0/24
+
+volumes:
+  consul_data:
+    driver: local
+  consul_client_data:
+    driver: local
+  app_data:
+    driver: local
+  ceph_mon_data:
+    driver: local
+  ceph_mgr_data:
+    driver: local
+  ceph_osd_data:
+    driver: local
+  prometheus_data:
+    driver: local
+  grafana_data:
+    driver: local
+  haproxy_stats:
+    driver: local

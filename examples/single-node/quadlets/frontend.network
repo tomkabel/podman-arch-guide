@@ -1,0 +1,19 @@
+# Quadlet Network File for Frontend Network
+# Place in ~/.config/containers/systemd/ or /etc/containers/systemd/
+
+[Network]
+NetworkName=frontend
+Driver=bridge
+Internal=false
+
+# IPAM configuration
+Subnet=172.20.1.0/24
+Gateway=172.20.1.1
+
+# DNS configuration
+DNS=8.8.8.8
+DNS=8.8.4.4
+
+# Labels
+Label=app=single-node-stack
+Label=network=frontend

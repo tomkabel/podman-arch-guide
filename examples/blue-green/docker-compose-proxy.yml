@@ -1,0 +1,98 @@
+# Blue-Green Proxy Configuration
+# Traffic routing and load balancer for blue-green deployments
+
+version: "3.8"
+
+services:
+  # HAProxy for Blue-Green Traffic Routing
+  haproxy:
+    image: docker.io/library/haproxy:2.8-alpine
+    container_name: blue-green-proxy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "8404:8404"  # Stats page
+    networks:
+      - shared-backend
+    volumes:
+      - ./haproxy/haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro,Z
+      - ./haproxy/certs:/etc/ssl/certs:ro,Z
+      - haproxy_stats:/var/lib/haproxy:Z
+    environment:
+      - ACTIVE_COLOR=${ACTIVE_COLOR:-blue}
+    depends_on:
+      - app-blue
+      - app-green
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8404/stats"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+      - SETGID
+      - SETUID
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+
+  # Health Check Aggregator
+  health-aggregator:
+    image: docker.io/library/alpine:latest
+    container_name: health-aggregator
+    restart: unless-stopped
+    networks:
+      - shared-backend
+    volumes:
+      - ./scripts/health-check.sh:/health-check.sh:ro,Z
+    command: >
+      sh -c "
+        while true; do
+          /health-check.sh
+          sleep 10
+        done
+      "
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
+  # Prometheus Metrics (optional)
+  prometheus:
+    image: docker.io/prom/prometheus:latest
+    container_name: blue-green-prometheus
+    restart: unless-stopped
+    networks:
+      - shared-backend
+    expose:
+      - "9090"
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro,Z
+      - prometheus_data:/prometheus:Z
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/usr/share/prometheus/console_libraries'
+      - '--web.console.templates=/usr/share/prometheus/consoles'
+      - '--web.enable-lifecycle'
+
+networks:
+  shared-backend:
+    driver: bridge
+    name: blue-green-shared
+    ipam:
+      config:
+        - subnet: 172.30.0.0/24
+
+volumes:
+  haproxy_stats:
+    driver: local
+  prometheus_data:
+    driver: local

@@ -1,0 +1,57 @@
+# Quadlet Container File for Redis Cache
+# Place in ~/.config/containers/systemd/ or /etc/containers/systemd/
+
+[Unit]
+Description=Redis Cache Server
+Documentation=https://redis.io/documentation
+Wants=network-online.target
+After=network-online.target
+
+[Container]
+Image=docker.io/library/redis:7-alpine
+ContainerName=redis-cache
+
+# Network configuration
+Network=backend.network
+
+# Resource limits
+Memory=512M
+MemorySwap=512M
+CPUQuota=50%
+
+# Security options
+SecurityLabelType=container_redis_t
+NoNewPrivileges=true
+DropCapability=ALL
+AddCapability=SETGID SETUID
+
+# Health check
+HealthCmd=redis-cli --raw incr ping || exit 1
+HealthInterval=10s
+HealthTimeout=5s
+HealthRetries=5
+HealthStartPeriod=10s
+
+# Command and configuration
+Exec=redis-server /usr/local/etc/redis/redis.conf
+
+# Secrets
+Secret=redis_password,type=env,target=REDIS_PASSWORD
+
+# Volumes
+Volume=redis-data.volume:/data:Z
+Volume=%h/config/redis/redis.conf:/usr/local/etc/redis/redis.conf:ro,Z
+
+# Sysctl settings
+Sysctl=net.core.somaxconn=65535
+
+# Restart policy
+Restart=unless-stopped
+RestartSec=10
+
+[Service]
+Restart=always
+TimeoutStartSec=60
+
+[Install]
+WantedBy=default.target

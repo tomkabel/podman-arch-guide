@@ -1,0 +1,253 @@
+# Single-Node Podman Deployment Example
+# Complete stack: Nginx Reverse Proxy + PostgreSQL + Redis + Application
+
+version: "3.8"
+
+services:
+  # Nginx Reverse Proxy
+  nginx:
+    image: docker.io/library/nginx:alpine
+    container_name: nginx-proxy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro,Z
+      - ./nginx/conf.d:/etc/nginx/conf.d:ro,Z
+      - nginx_certs:/etc/nginx/certs:Z
+      - nginx_html:/usr/share/nginx/html:Z
+      - nginx_cache:/var/cache/nginx:Z
+    environment:
+      - NGINX_ENTRYPOINT_QUIET_LOGS=1
+    networks:
+      - frontend
+      - backend
+    depends_on:
+      - app
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - SETGID
+      - SETUID
+    deploy:
+      resources:
+        limits:
+          cpus: '0.50'
+          memory: 256M
+        reservations:
+          cpus: '0.25'
+          memory: 128M
+    labels:
+      - "app=nginx-proxy"
+      - "environment=production"
+
+  # Application Container (Nginx as example app)
+  app:
+    image: docker.io/library/nginx:alpine
+    container_name: app-server
+    restart: unless-stopped
+    expose:
+      - "8080"
+    volumes:
+      - app_data:/usr/share/nginx/html:Z
+      - ./app/config:/etc/nginx/conf.d:ro,Z
+    environment:
+      - APP_ENV=production
+      - APP_DEBUG=false
+    networks:
+      - backend
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - SETGID
+      - SETUID
+    deploy:
+      resources:
+        limits:
+          cpus: '0.50'
+          memory: 256M
+        reservations:
+          cpus: '0.25'
+          memory: 128M
+    labels:
+      - "app=main-application"
+      - "environment=production"
+
+  # PostgreSQL Database
+  postgres:
+    image: docker.io/library/postgres:16-alpine
+    container_name: postgres-db
+    restart: unless-stopped
+    expose:
+      - "5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data:Z
+      - ./init-scripts:/docker-entrypoint-initdb.d:ro,Z
+      - postgres_backup:/backups:Z
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER:-appuser}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}
+      - POSTGRES_DB=${POSTGRES_DB:-appdb}
+      - POSTGRES_INITDB_ARGS=--auth-host=scram-sha-256 --auth-local=scram-sha-256
+      - PGDATA=/var/lib/postgresql/data/pgdata
+    networks:
+      - backend
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-appuser} -d ${POSTGRES_DB:-appdb}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - SETGID
+      - SETUID
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 1G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+    labels:
+      - "app=postgres"
+      - "environment=production"
+    shm_size: '256mb'
+
+  # Redis Cache
+  redis:
+    image: docker.io/library/redis:7-alpine
+    container_name: redis-cache
+    restart: unless-stopped
+    expose:
+      - "6379"
+    volumes:
+      - redis_data:/data:Z
+      - ./redis/redis.conf:/usr/local/etc/redis/redis.conf:ro,Z
+    command: redis-server /usr/local/etc/redis/redis.conf
+    environment:
+      - REDIS_PASSWORD=${REDIS_PASSWORD:?REDIS_PASSWORD must be set}
+    networks:
+      - backend
+    healthcheck:
+      test: ["CMD", "redis-cli", "--raw", "incr", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - SETGID
+      - SETUID
+    deploy:
+      resources:
+        limits:
+          cpus: '0.50'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 256M
+    labels:
+      - "app=redis"
+      - "environment=production"
+    sysctls:
+      - net.core.somaxconn=65535
+
+  # Backup Service
+  backup:
+    image: docker.io/offen/docker-volume-backup:v2
+    container_name: backup-service
+    restart: unless-stopped
+    volumes:
+      - postgres_data:/backup/postgres:ro,Z
+      - redis_data:/backup/redis:ro,Z
+      - ./backups:/archive:Z
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    environment:
+      - BACKUP_CRON_EXPRESSION=0 2 * * *
+      - BACKUP_RETENTION_DAYS=30
+      - BACKUP_FILENAME=backup-%Y-%m-%dT%H-%M-%S.tar.gz
+      - BACKUP_ARCHIVE=/archive
+      - BACKUP_STOP_CONTAINER_LABEL=backup.stop
+      - BACKUP_FROM_SNAPSHOT=true
+      - AWS_S3_BUCKET_NAME=${BACKUP_S3_BUCKET:-}
+      - AWS_ACCESS_KEY_ID=${BACKUP_AWS_ACCESS_KEY:-}
+      - AWS_SECRET_ACCESS_KEY=${BACKUP_AWS_SECRET_KEY:-}
+      - AWS_S3_ENDPOINT=${BACKUP_S3_ENDPOINT:-}
+      - AWS_S3_PATH_STYLE_ENDPOINT=true
+    networks:
+      - backend
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    labels:
+      - "app=backup"
+      - "backup.stop=true"
+    deploy:
+      resources:
+        limits:
+          cpus: '0.25'
+          memory: 128M
+
+networks:
+  frontend:
+    driver: bridge
+    internal: false
+    ipam:
+      config:
+        - subnet: 172.20.1.0/24
+  backend:
+    driver: bridge
+    internal: true
+    ipam:
+      config:
+        - subnet: 172.20.2.0/24
+
+volumes:
+  nginx_certs:
+    driver: local
+  nginx_html:
+    driver: local
+  nginx_cache:
+    driver: local
+  app_data:
+    driver: local
+  postgres_data:
+    driver: local
+  postgres_backup:
+    driver: local
+  redis_data:
+    driver: local
