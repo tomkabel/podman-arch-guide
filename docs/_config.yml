@@ -1,0 +1,15 @@
+title: Podman Documentation
+description: Documentation for Podman project
+baseurl: ""
+url: ""
+theme: minima
+
+markdown: kramdown
+
+exclude:
+  - Gemfile
+  - Gemfile.lock
+  - vendor
+
+include:
+  - .git
