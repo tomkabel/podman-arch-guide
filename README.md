@@ -1,8 +1,8 @@
 # Podman on Arch Linux — A++ Production Guide
 
-[![CI](https://github.com/yourorg/podman-arch-guide/actions/workflows/test-scripts.yml/badge.svg)](https://github.com/yourorg/podman-arch-guide/actions)
+[![CI](https://github.com/tomkabel/podman/actions/workflows/test-scripts.yml/badge.svg)](https://github.com/tomkabel/podman/actions)
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/Version-5.0-success)](https://github.com/yourorg/podman-arch-guide/releases)
+[![Version](https://img.shields.io/badge/Version-5.0-success)](https://github.com/tomkabel/podman/releases)
 
 > **Production-tested, CI-validated, battle-hardened** container orchestration on Arch Linux
 
