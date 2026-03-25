@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{{ page.title | default: "Podman on Arch Linux - A++ Production Guide" }}</title>
+  <link rel="stylesheet" href="{{ site.baseurl }}/assets/css/style.css">
+</head>
+<body>
+  <header class="site-header">
+    <div class="container">
+      <a href="{{ site.baseurl }}/" class="site-title">🐳 Podman on Arch Linux</a>
+      <nav>
+        <ul class="nav-links">
+          <li><a href="{{ site.baseurl }}/quickstart/">Quick Start</a></li>
+          <li><a href="{{ site.baseurl }}/runbook/">Runbook</a></li>
+          <li><a href="{{ site.baseurl }}/architecture/">Architecture</a></li>
+          <li><a href="{{ site.baseurl }}/monitoring/">Monitoring</a></li>
+          <li><a href="{{ site.baseurl }}/chaos-engineering/">Chaos</a></li>
+        </ul>
+      </nav>
+    </div>
+  </header>
+
+  <main>
+    <div class="container">
+      {{ content }}
+    </div>
+  </main>
+
+  <footer class="site-footer">
+    <div class="container">
+      <p>Production-tested, CI-validated, battle-hardened container orchestration on Arch Linux</p>
+      <p><a href="https://github.com/tomkabel/podman-arch-guide">View on GitHub</a></p>
+    </div>
+  </footer>
+</body>
+</html>
