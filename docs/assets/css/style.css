@@ -516,18 +516,6 @@ pre {
   position: relative;
 }
 
-pre::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  height: 32px;
-  background: var(--bg-tertiary);
-  border-bottom: 1px solid var(--border-subtle);
-  border-radius: 8px 8px 0 0;
-}
-
 pre code {
   background: transparent;
   padding: 0;
