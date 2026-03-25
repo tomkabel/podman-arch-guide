@@ -33,8 +33,8 @@ jobs:
       - name: Setup Jekyll
         run: bundle install
 
-      - name: Build Jekyll site
-        run: bundle exec jekyll build --config docs/_config.yml --destination ./_site
+      - name: Build Jekyll site from docs/
+        run: bundle exec jekyll build --config docs/_config.yml --source docs --destination ./_site
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
