@@ -2,19 +2,8 @@ title: "Podman on Arch Linux - A++ Production Guide"
 description: "Production-tested, CI-validated, battle-hardened container orchestration on Arch Linux"
 baseurl: "/podman-arch-guide"
 url: "https://tomkabel.github.io"
-theme: minima
 
 markdown: kramdown
-
-# Navigation
-nav_order:
-  - quickstart/README.md
-  - runbook/README.md
-  - architecture/README.md
-  - monitoring/README.md
-  - cost-optimization/README.md
-  - capacity-planning/README.md
-  - chaos-engineering/game-days.md
 
 exclude:
   - Gemfile
