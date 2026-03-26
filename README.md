@@ -6,7 +6,7 @@
 
 > **Production-tested, CI-validated, battle-hardened** container orchestration on Arch Linux
 
-**Live Documentation**: [https://yourorg.github.io/podman-arch-guide](https://yourorg.github.io/podman-arch-guide)
+**Live Documentation**: [https://tomkabel.github.io/podman-arch-guide](https://tomkabel.github.io/podman-arch-guide)
 
 ---
 
